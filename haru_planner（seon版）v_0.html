@@ -275,15 +275,20 @@
             const base = [{ role: 'user', parts: [{ text: SERN_PROMPT }] }];
             const recent = useHistory ? sernHistory.slice(-6) : [];
             const contents = base.concat(recent, [{ role: 'user', parts: [{ text: message }] }]);
-            const res = await fetch(GEMINI_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents })
-            });
-            const data = await res.json();
-            const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (useHistory) sernHistory.push({ role: 'user', parts: [{ text: message }] }, { role: 'model', parts: [{ text: reply }] });
-            return reply;
+            try {
+                const res = await fetch(GEMINI_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents })
+                });
+                const data = await res.json();
+                const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (useHistory) sernHistory.push({ role: 'user', parts: [{ text: message }] }, { role: 'model', parts: [{ text: reply }] });
+                return reply;
+            } catch (err) {
+                console.error('Sern chat error', err);
+                return '';
+            }
         };
         const updateCompanion = async (key) => {
             const prompt = companionEvents[key];
@@ -416,20 +421,24 @@
             const title = newTaskTitleInput.value.trim();
             if (!title) return;
             const prompt = `请将以下任务拆解成适合ADHD的更小的步骤，用中文列出3-5条：任务：${title}`;
-            const res = await fetch(GEMINI_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] })
-            });
-            const data = await res.json();
-            const lines = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').split(/\n+/).map(l => l.replace(/^[-*\d\.\s]+/, '').trim()).filter(Boolean);
-            for (const t of lines) {
-                await db.tasks.add({ date: toYYYYMMDD(currentDate), title: t, done: false });
+            try {
+                const res = await fetch(GEMINI_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] })
+                });
+                const data = await res.json();
+                const lines = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').split(/\n+/).map(l => l.replace(/^[-*\d\.\s]+/, '').trim()).filter(Boolean);
+                for (const t of lines) {
+                    await db.tasks.add({ date: toYYYYMMDD(currentDate), title: t, done: false });
+                }
+                newTaskTitleInput.value = newTaskStartTimeInput.value = newTaskEndTimeInput.value = '';
+                addTaskForm.classList.add('hidden'); addTaskPlaceholder.classList.remove('hidden');
+                await renderAppForDate(currentDate);
+                updateCompanion('taskAdded');
+            } catch (err) {
+                console.error('Split task error', err);
             }
-            newTaskTitleInput.value = newTaskStartTimeInput.value = newTaskEndTimeInput.value = '';
-            addTaskForm.classList.add('hidden'); addTaskPlaceholder.classList.remove('hidden');
-            await renderAppForDate(currentDate);
-            updateCompanion('taskAdded');
         };
         addTaskPlaceholder.addEventListener('click', () => { addTaskPlaceholder.classList.add('hidden'); addTaskForm.classList.remove('hidden'); newTaskTitleInput.focus(); });
         cancelAddTaskBtn.addEventListener('click', () => { addTaskForm.classList.add('hidden'); addTaskPlaceholder.classList.remove('hidden'); });
