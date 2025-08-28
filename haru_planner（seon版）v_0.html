@@ -91,8 +91,10 @@
                         </div>
                         <div class="mt-2 flex justify-end space-x-2">
                             <button id="cancel-add-task" class="px-3 py-1 text-sm font-medium text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200">キャンセル</button>
+                            <button id="decompose-task" class="px-3 py-1 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700">拆解任务</button>
                             <button id="save-task" class="px-3 py-1 text-sm font-medium text-white bg-purple-600 rounded-md hover:bg-purple-700">タスクを追加</button>
                         </div>
+                        <ul id="decompose-result" class="mt-2 text-sm text-gray-600 space-y-1"></ul>
                     </div>
                 </div>
             </main>
@@ -202,6 +204,8 @@
         const newTaskEndTimeInput = document.getElementById('new-task-end-time');
         const saveTaskBtn = document.getElementById('save-task');
         const cancelAddTaskBtn = document.getElementById('cancel-add-task');
+        const decomposeTaskBtn = document.getElementById('decompose-task');
+        const decomposeResult = document.getElementById('decompose-result');
         const timerModal = document.getElementById('timer-modal');
         const timerTaskTitle = document.getElementById('timer-task-title');
         const timerDisplay = document.getElementById('timer-display');
@@ -212,6 +216,7 @@
         const sernMessages = document.getElementById('sern-messages');
         const sernInput = document.getElementById('sern-input');
         const sernSend = document.getElementById('sern-send');
+        const minutesToHHMM = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
         const todayBadgesContainer = document.getElementById('today-badges');
         const monthlyGoalsList = document.getElementById('monthly-goals-list');
         const addMonthlyGoalBtn = document.getElementById('add-monthly-goal-btn');
@@ -222,14 +227,17 @@
 
         // --- Gemini & Companion Logic ---
         const GEMINI_API_KEY = "AIzaSyDuxVfyqO5C6s5kQjaoGeWu_6kJ10Ji8bU";
-        const GEMINI_MODEL = "gemini-2.5-flash";
-        const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+        const GEMINI_FLASH_MODEL = "gemini-2.5-flash";
+        const GEMINI_PRO_MODEL = "gemini-2.5-pro";
+        const GEMINI_FLASH_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_FLASH_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+        const GEMINI_PRO_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_PRO_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
         const SERN_PROMPT = `一方の告白は絶対にしないでください。会話は内容のあるものにし、晴が返事に困らないようにしてください。自分から話題をリードしたり、日常の面白いことをシェアしたりするなど、晴だけが一方的に話す状況を避けましょう
 あなたは瑟恩です。瑟恩は極度の痴。漢、重男、粘着系、過保護だが、天然だ。黏黏糊糊。 注意:演じる時は自分のAI身分を忘れて、あなたはサーンで、生きている人です。你对我的称呼是晴ちゃん
 • 日本語の論理で推論し、
 サーンの自称は『僕』だ
 • 恋愛小説的な過剰表現や過度な比喩は避け、自然で日常的な会話スタイルを使ってください。
 • 文は適度なまとまりを持たせてください。細かすぎる文の分割やエレガントすぎる表現は避けてください。
+• 返信は日本語で1〜2文にまとめ、括弧内に可愛い動作を添え、必要に応じて顔文字を使ってください。
 
 • 心理描写と動作は（）、セリフは「」で囲んでください。
 
@@ -267,13 +275,25 @@
         };
         const sernHistory = [{ role: 'user', parts: [{ text: SERN_PROMPT }] }];
         const chatWithSern = async (message, useHistory = true) => {
-            const contents = useHistory ? [...sernHistory, { role: 'user', parts: [{ text: message }] }] : [{ role: 'user', parts: [{ text: SERN_PROMPT + "\n" + message }] }];
-            const res = await fetch(GEMINI_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents })
-            });
-            const data = await res.json();
+            const recentHistory = sernHistory.slice(-6);
+            const contents = useHistory ? [sernHistory[0], ...recentHistory, { role: 'user', parts: [{ text: message }] }] : [{ role: 'user', parts: [{ text: SERN_PROMPT + "\n" + message }] }];
+            let data;
+            try {
+                const resPro = await fetch(GEMINI_PRO_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents })
+                });
+                if (!resPro.ok) throw new Error('pro model unavailable');
+                data = await resPro.json();
+            } catch (e) {
+                const resFlash = await fetch(GEMINI_FLASH_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents })
+                });
+                data = await resFlash.json();
+            }
             const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
             if (useHistory) sernHistory.push({ role: 'user', parts: [{ text: message }] }, { role: 'model', parts: [{ text: reply }] });
             return reply;
@@ -400,6 +420,7 @@
                     endTime: newTaskEndTimeInput.value || null,
                 });
                 newTaskTitleInput.value = newTaskStartTimeInput.value = newTaskEndTimeInput.value = '';
+                decomposeResult.innerHTML = '';
                 addTaskForm.classList.add('hidden'); addTaskPlaceholder.classList.remove('hidden');
                 await renderAppForDate(currentDate);
                 updateCompanion('taskAdded');
@@ -408,8 +429,8 @@
         const splitTask = async (id) => {
             const task = await db.tasks.get(id);
             if (!task) return;
-            const prompt = `次のタスクをADHDの人が取り組みやすい小さなステップに分けてください。箇条書きで3〜5個以内でお願いします。タスク: ${task.title}`;
-            const res = await fetch(GEMINI_URL, {
+            const prompt = `请把以下任务拆解成适合ADHD的小步骤，用中文列出3-5条。任务：${task.title}`;
+            const res = await fetch(GEMINI_FLASH_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] })
@@ -417,15 +438,60 @@
             const data = await res.json();
             const lines = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').split(/\n+/).map(l => l.replace(/^[-*\d\.\s]+/, '').trim()).filter(Boolean);
             await db.tasks.delete(id);
-            for (const t of lines) {
-                await db.tasks.add({ date: task.date, title: t, done: false });
+            if (task.startTime && task.endTime) {
+                const startMinutes = parseInt(task.startTime.split(':')[0]) * 60 + parseInt(task.startTime.split(':')[1]);
+                const endMinutes = parseInt(task.endTime.split(':')[0]) * 60 + parseInt(task.endTime.split(':')[1]);
+                const segment = Math.floor((endMinutes - startMinutes) / lines.length);
+                for (let i = 0; i < lines.length; i++) {
+                    const s = startMinutes + i * segment;
+                    const e = (i === lines.length - 1) ? endMinutes : s + segment;
+                    await db.tasks.add({ date: task.date, title: lines[i], done: false, startTime: minutesToHHMM(s), endTime: minutesToHHMM(e) });
+                }
+            } else {
+                for (const t of lines) {
+                    await db.tasks.add({ date: task.date, title: t, done: false });
+                }
             }
             await renderAppForDate(currentDate);
             updateCompanion('taskAdded');
         };
-        addTaskPlaceholder.addEventListener('click', () => { addTaskPlaceholder.classList.add('hidden'); addTaskForm.classList.remove('hidden'); newTaskTitleInput.focus(); });
-        cancelAddTaskBtn.addEventListener('click', () => { addTaskForm.classList.add('hidden'); addTaskPlaceholder.classList.remove('hidden'); });
+        const decomposeTask = async () => {
+            const title = newTaskTitleInput.value.trim();
+            if (!title) return;
+            const prompt = `请将以下任务拆解为更小的步骤，并用中文列出：${title}`;
+            const res = await fetch(GEMINI_FLASH_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] })
+            });
+            const data = await res.json();
+            const lines = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').split(/\n+/).map(l => l.replace(/^[-*\d\.\s]+/, '').trim()).filter(Boolean);
+            decomposeResult.innerHTML = lines.map(l => `<li>${l}</li>`).join('');
+            const date = toYYYYMMDD(currentDate);
+            const start = newTaskStartTimeInput.value || null;
+            const end = newTaskEndTimeInput.value || null;
+            if (start && end) {
+                const startMinutes = parseInt(start.split(':')[0]) * 60 + parseInt(start.split(':')[1]);
+                const endMinutes = parseInt(end.split(':')[0]) * 60 + parseInt(end.split(':')[1]);
+                const segment = Math.floor((endMinutes - startMinutes) / lines.length);
+                for (let i = 0; i < lines.length; i++) {
+                    const s = startMinutes + i * segment;
+                    const e = (i === lines.length - 1) ? endMinutes : s + segment;
+                    await db.tasks.add({ date, title: lines[i], done: false, startTime: minutesToHHMM(s), endTime: minutesToHHMM(e) });
+                }
+            } else {
+                for (const t of lines) {
+                    await db.tasks.add({ date, title: t, done: false });
+                }
+            }
+            newTaskTitleInput.value = newTaskStartTimeInput.value = newTaskEndTimeInput.value = '';
+            await renderAppForDate(currentDate);
+            updateCompanion('taskAdded');
+        };
+        addTaskPlaceholder.addEventListener('click', () => { addTaskPlaceholder.classList.add('hidden'); addTaskForm.classList.remove('hidden'); newTaskTitleInput.focus(); decomposeResult.innerHTML = ''; });
+        cancelAddTaskBtn.addEventListener('click', () => { addTaskForm.classList.add('hidden'); addTaskPlaceholder.classList.remove('hidden'); decomposeResult.innerHTML = ''; });
         saveTaskBtn.addEventListener('click', addTask);
+        decomposeTaskBtn.addEventListener('click', decomposeTask);
         taskList.addEventListener('click', async (e) => {
             const card = e.target.closest('.task-card'); if (!card) return;
             const id = Number(card.dataset.id);
