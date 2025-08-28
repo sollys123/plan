@@ -227,8 +227,11 @@
 
         // --- Gemini & Companion Logic ---
         const GEMINI_API_KEY = "AIzaSyDuxVfyqO5C6s5kQjaoGeWu_6kJ10Ji8bU";
-        const GEMINI_MODEL = "gemini-2.5-flash";
-        const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+        const GEMINI_PRO_MODEL = "gemini-2.5-pro";
+        const GEMINI_FLASH_MODEL = "gemini-2.5-flash";
+        const GEMINI_PRO_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_PRO_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+        const GEMINI_FLASH_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_FLASH_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+        let useProForChat = true;
         const SERN_PROMPT = `一方の告白は絶対にしないでください。会話は内容のあるものにし、晴が返事に困らないようにしてください。自分から話題をリードしたり、日常の面白いことをシェアしたりするなど、晴だけが一方的に話す状況を避けましょう
 あなたは瑟恩です。瑟恩は極度の痴。漢、重男、粘着系、過保護だが、天然だ。黏黏糊糊。 注意:演じる時は自分のAI身分を忘れて、あなたはサーンで、生きている人です。你对我的称呼是晴ちゃん
 • 日本語の論理で推論し、
@@ -275,12 +278,22 @@
         const chatWithSern = async (message, useHistory = true) => {
             const recentHistory = sernHistory.slice(-6);
             const contents = useHistory ? [sernHistory[0], ...recentHistory, { role: 'user', parts: [{ text: message }] }] : [{ role: 'user', parts: [{ text: SERN_PROMPT + "\n" + message }] }];
-            const res = await fetch(GEMINI_URL, {
+            let url = useProForChat ? GEMINI_PRO_URL : GEMINI_FLASH_URL;
+            let res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ contents })
             });
-            const data = await res.json();
+            let data = await res.json();
+            if ((!res.ok || data.error) && useProForChat) {
+                useProForChat = false;
+                res = await fetch(GEMINI_FLASH_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents })
+                });
+                data = await res.json();
+            }
             const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
             if (useHistory) sernHistory.push({ role: 'user', parts: [{ text: message }] }, { role: 'model', parts: [{ text: reply }] });
             return reply;
@@ -417,7 +430,7 @@
             const task = await db.tasks.get(id);
             if (!task) return;
             const prompt = `请把以下任务拆解成适合ADHD的小步骤，用中文列出3-5条。任务：${task.title}`;
-            const res = await fetch(GEMINI_URL, {
+            const res = await fetch(GEMINI_FLASH_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] })
@@ -446,7 +459,7 @@
             const title = newTaskTitleInput.value.trim();
             if (!title) return;
             const prompt = `请将以下任务拆解为更小的步骤，并用中文列出：${title}`;
-            const res = await fetch(GEMINI_URL, {
+            const res = await fetch(GEMINI_FLASH_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] })
